@@ -3,9 +3,9 @@ import torch.nn as nn
 import torch.optim as optim
 
 
-class Encoder(nn.Module):
-    def __init__(self, input_dim, hidden_layers, output_dim, activation_function=nn.ReLU()):
-        super(Encoder, self).__init__()
+class Binary2BinaryEncoder(nn.Module):
+    def __init__(self, input_dim, hidden_layers, output_dim, activation_function=nn.LeakyReLU()):
+        super(Binary2BinaryEncoder, self).__init__()
         layers = [nn.Linear(input_dim, hidden_layers[0]), activation_function]
         for i in range(1, len(hidden_layers)):
             layers.append(nn.Linear(hidden_layers[i-1], hidden_layers[i]))
@@ -18,9 +18,9 @@ class Encoder(nn.Module):
         return self.model(x)
 
 
-class Decoder(nn.Module):
-    def __init__(self, input_dim, hidden_layers, output_dim, activation_function=nn.ReLU()):
-        super(Decoder, self).__init__()
+class Binary2BinaryDecoder(nn.Module):
+    def __init__(self, input_dim, hidden_layers, output_dim, activation_function=nn.LeakyReLU()):
+        super(Binary2BinaryDecoder, self).__init__()
         layers = [nn.Linear(input_dim, hidden_layers[0]), activation_function]
         for i in range(1, len(hidden_layers)):
             layers.append(nn.Linear(hidden_layers[i-1], hidden_layers[i]))
@@ -32,11 +32,11 @@ class Decoder(nn.Module):
         return self.model(x)
 
 
-class Autoencoder(nn.Module):
-    def __init__(self, input_dim, encoded_dim, encoder_hidden_layers, decoder_hidden_layers, activation_function=nn.ReLU()):
-        super(Autoencoder, self).__init__()
-        self.encoder = Encoder(input_dim, encoder_hidden_layers, encoded_dim, activation_function)
-        self.decoder = Decoder(encoded_dim, decoder_hidden_layers, input_dim, activation_function)
+class Binary2BinaryAutoencoder(nn.Module):
+    def __init__(self, input_dim, encoded_dim, encoder_hidden_layers, decoder_hidden_layers, activation_function=nn.LeakyReLU()):
+        super(Binary2BinaryAutoencoder, self).__init__()
+        self.encoder = Binary2BinaryEncoder(input_dim, encoder_hidden_layers, encoded_dim, activation_function)
+        self.decoder = Binary2BinaryDecoder(encoded_dim, decoder_hidden_layers, input_dim, activation_function)
 
     def forward(self, x, num_fixed=3):
         encoded = self.encoder(x)
@@ -58,7 +58,7 @@ encoder_hidden_layers = [20, 15]
 decoder_hidden_layers = [15, 20]
 
 # Instantiate the autoencoder
-autoencoder = Autoencoder(input_dim, encoded_dim, encoder_hidden_layers, decoder_hidden_layers)
+autoencoder = Binary2BinaryAutoencoder(input_dim, encoded_dim, encoder_hidden_layers, decoder_hidden_layers)
 
 # Loss function and optimizer
 criterion = nn.MSELoss()
