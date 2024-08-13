@@ -5,14 +5,12 @@ import torch.nn.functional as F
 
 
 class Binary2BinaryEncoder(nn.Module):
-    def __init__(self, input_dim, hidden_layers, output_dim, activation_function=nn.LeakyReLU()):
+    def __init__(self, input_dim, latent_dim, n_hidden_layers, n_units_per_layer, activation_function=nn.ReLU()):
         super(Binary2BinaryEncoder, self).__init__()
-        layers = [nn.Linear(input_dim, hidden_layers[0]), activation_function]
-        for i in range(1, len(hidden_layers)):
-            layers.append(nn.Linear(hidden_layers[i-1], hidden_layers[i]))
-            layers.append(activation_function)
-        layers.append(nn.Linear(hidden_layers[-1], output_dim))
-        layers.append(nn.Sigmoid())  # Use sigmoid to keep outputs between 0 and 1
+        layers = [nn.Linear(input_dim, n_units_per_layer), activation_function]
+        for _ in range(n_hidden_layers - 1):
+            layers.extend([nn.Linear(n_units_per_layer, n_units_per_layer), activation_function])
+        layers.extend([nn.Linear(n_units_per_layer, latent_dim), nn.Sigmoid()])
         self.model = nn.Sequential(*layers)
 
     def forward(self, x):
@@ -20,13 +18,12 @@ class Binary2BinaryEncoder(nn.Module):
 
 
 class Binary2BinaryDecoder(nn.Module):
-    def __init__(self, input_dim, hidden_layers, output_dim, activation_function=nn.LeakyReLU()):
+    def __init__(self, latent_dim, output_dim, n_hidden_layers, n_units_per_layer, activation_function=nn.ReLU()):
         super(Binary2BinaryDecoder, self).__init__()
-        layers = [nn.Linear(input_dim, hidden_layers[0]), activation_function]
-        for i in range(1, len(hidden_layers)):
-            layers.append(nn.Linear(hidden_layers[i-1], hidden_layers[i]))
-            layers.append(activation_function)
-        layers.append(nn.Linear(hidden_layers[-1], output_dim))
+        layers = [nn.Linear(latent_dim, n_units_per_layer), activation_function]
+        for _ in range(n_hidden_layers - 1):
+            layers.extend([nn.Linear(n_units_per_layer, n_units_per_layer), activation_function])
+        layers.append(nn.Linear(n_units_per_layer, output_dim))
         self.model = nn.Sequential(*layers)
 
     def forward(self, x):
@@ -34,10 +31,11 @@ class Binary2BinaryDecoder(nn.Module):
 
 
 class Binary2BinaryAutoencoder(nn.Module):
-    def __init__(self, input_dim, encoded_dim, encoder_hidden_layers, decoder_hidden_layers, activation_function=nn.LeakyReLU()):
+    def __init__(self, input_dim, output_dim, latent_dim, n_hidden_layers, n_units_per_layer,
+                 activation_function=nn.ReLU()):
         super(Binary2BinaryAutoencoder, self).__init__()
-        self.encoder = Binary2BinaryEncoder(input_dim, encoder_hidden_layers, encoded_dim, activation_function)
-        self.decoder = Binary2BinaryDecoder(encoded_dim, decoder_hidden_layers, input_dim, activation_function)
+        self.encoder = Binary2BinaryEncoder(input_dim, latent_dim, n_hidden_layers, n_units_per_layer, activation_function)
+        self.decoder = Binary2BinaryDecoder(latent_dim, output_dim, n_hidden_layers, n_units_per_layer, activation_function)
 
     def forward(self, x, num_fixed=3):
         encoded = self.encoder(x)
@@ -50,6 +48,30 @@ class Binary2BinaryAutoencoder(nn.Module):
 
         decoded = self.decoder(encoded_binary)
         return encoded, decoded
+
+
+class GoalPredictor(torch.nn.Module):
+    def __init__(self, n_latent_dims=4, n_hidden_layers=1, n_units_per_layer=32):
+        super().__init__()
+
+        self.layers = []
+        if n_hidden_layers == 0:
+            self.layers.extend([torch.nn.Linear(n_latent_dims, 1)])
+        else:
+            self.layers.extend(
+                [torch.nn.Linear(n_latent_dims, n_units_per_layer),
+                 torch.nn.LeakyReLU(inplace=True), ])
+            self.layers.extend(
+                [torch.nn.Linear(n_units_per_layer, n_units_per_layer),
+                 torch.nn.LeakyReLU(inplace=True), ] * (n_hidden_layers - 1))
+            self.layers.extend([torch.nn.Linear(n_units_per_layer, 1)])
+
+        self.layers.extend([torch.nn.Sigmoid()])
+        self.predictor = torch.nn.Sequential(*self.layers)
+
+    def forward(self, z):
+        reward = self.predictor(z).squeeze()
+        return reward
 
 
 class RewardPredictor(torch.nn.Module):
@@ -71,41 +93,58 @@ class RewardPredictor(torch.nn.Module):
 
         self.reward_predictor = torch.nn.Sequential(*self.layers)
 
-    def forward(self, z0, z1, a):
+    def forward(self, z0, a, z1):
         a_logits = F.one_hot(a, num_classes=self.n_actions).float()
         context = torch.cat((z0, z1, a_logits), -1)
-        reward = self.reward_predictor(context).squeeze(-1)
+        reward = self.reward_predictor(context).squeeze()
         return reward
 
 
-# Example setup
-input_dim = 10
-encoded_dim = 4
-encoder_hidden_layers = [20, 15]
-decoder_hidden_layers = [15, 20]
+class InvNet(torch.nn.Module):
+    def __init__(self, n_actions, n_latent_dims=4, n_hidden_layers=1, n_units_per_layer=32):
+        super().__init__()
+        self.n_actions = n_actions
 
-# Instantiate the autoencoder
-autoencoder = Binary2BinaryAutoencoder(input_dim, encoded_dim, encoder_hidden_layers, decoder_hidden_layers)
+        self.layers = []
+        if n_hidden_layers == 0:
+            self.layers.extend([torch.nn.Linear(2 * n_latent_dims, n_actions)])
+        else:
+            self.layers.extend(
+                [torch.nn.Linear(2 * n_latent_dims, n_units_per_layer),
+                 torch.nn.Tanh()])
+            self.layers.extend(
+                [torch.nn.Linear(n_units_per_layer, n_units_per_layer),
+                 torch.nn.Tanh()] * (n_hidden_layers - 1))
+            self.layers.extend([torch.nn.Linear(n_units_per_layer, n_actions)])
 
-# Loss function and optimizer
-criterion = nn.MSELoss()
-optimizer = optim.Adam(autoencoder.parameters(), lr=0.001)
+        self.inv_model = torch.nn.Sequential(*self.layers)
 
-# Example input
-x = torch.randn(1, input_dim)  # Generate a random input vector
+    def forward(self, z0, z1):
+        context = torch.cat((z0, z1), -1)
+        a_logits = self.inv_model(context)
+        return a_logits
 
-# Training process
-for epoch in range(100):  # Assume training for 100 epochs
-    optimizer.zero_grad()
-    encoded, decoded = autoencoder(x, num_fixed=2)  # Let's say we fix the last 2 bits
-    loss = criterion(decoded, x)
-    loss.backward()
-    optimizer.step()
-    if epoch % 10 == 0:
-        print(f'Epoch {epoch}, Loss: {loss.item()}')
 
-# Check the outputs after training
-encoded, decoded = autoencoder(x, num_fixed=2)
-print("Original:", x)
-print("Encoded:", encoded)
-print("Decoded:", decoded)
+class ContrastiveNet(torch.nn.Module):
+    def __init__(self, n_latent_dims=4, n_hidden_layers=1, n_units_per_layer=32):
+        super().__init__()
+        self.frozen = False
+
+        self.layers = []
+        if n_hidden_layers == 0:
+            self.layers.extend([torch.nn.Linear(2 * n_latent_dims, 1)])
+        else:
+            self.layers.extend(
+                [torch.nn.Linear(2 * n_latent_dims, n_units_per_layer),
+                 torch.nn.Tanh()])
+            self.layers.extend(
+                [torch.nn.Linear(n_units_per_layer, n_units_per_layer),
+                 torch.nn.Tanh()] * (n_hidden_layers - 1))
+            self.layers.extend([torch.nn.Linear(n_units_per_layer, 1)])
+        self.layers.extend([torch.nn.Sigmoid()])
+        self.model = torch.nn.Sequential(*self.layers)
+
+    def forward(self, z0, z1):
+        context = torch.cat((z0, z1), -1)
+        fakes = self.model(context).squeeze()
+        return fakes
