@@ -4,13 +4,56 @@ import torch.optim as optim
 import torch.nn.functional as F
 
 
+mse_loss = nn.MSELoss()
+cross_entropy = torch.nn.CrossEntropyLoss()
+bce_loss = torch.nn.BCELoss()
+
+
+# mse loss for auto encoder
+def reconstruction_loss(recon_x: torch.Tensor, x: torch.Tensor) -> torch.Tensor:
+    return mse_loss(recon_x, x)
+
+
+# weighted distance loss for pushing neighbour states being similar
+def position_weighted_contrastive_loss(z0: torch.Tensor, z1: torch.Tensor, labels: torch.Tensor) -> torch.Tensor:
+    distances = torch.norm(z0 - z1, p=2, dim=2)
+    n_features = z0.size(2)
+    weights = torch.linspace(2.0, 1.0, steps=n_features).to(z0.device)
+    weighted_distances = distances * weights
+    weighted_distance = torch.mean(weighted_distances, dim=1)
+    loss = torch.mean(labels * torch.pow(weighted_distance, 2))
+    return loss
+
+
+# loss between predicted actions and actual actions from given pairs of state transitions
+def inverse_loss(pred_a: torch.Tensor, a: torch.Tensor) -> torch.Tensor:
+    return cross_entropy(input=pred_a, target=a)
+
+
+# loss for predictions of two states being neighbours or not
+def ratio_loss(labels: torch.Tensor, pred_labels: torch.Tensor) -> torch.Tensor:
+    return bce_loss(input=pred_labels, target=labels.float())
+
+
+# loss for predictions of rewards within state-action-state transitions
+def reward_loss(pred_r: torch.Tensor, r: torch.Tensor) -> torch.Tensor:
+    return mse_loss(pred_r, r)
+
+
 class Binary2BinaryEncoder(nn.Module):
-    def __init__(self, input_dim, latent_dim, n_hidden_layers, n_units_per_layer, activation_function=nn.ReLU()):
+    def __init__(
+            self,
+            n_input_dims,
+            n_latent_dims,
+            n_hidden_layers,
+            n_units_per_layer,
+            activation_function=nn.LeakyReLU(),
+    ):
         super(Binary2BinaryEncoder, self).__init__()
-        layers = [nn.Linear(input_dim, n_units_per_layer), activation_function]
+        layers = [nn.Linear(n_input_dims, n_units_per_layer), activation_function]
         for _ in range(n_hidden_layers - 1):
             layers.extend([nn.Linear(n_units_per_layer, n_units_per_layer), activation_function])
-        layers.extend([nn.Linear(n_units_per_layer, latent_dim), nn.Sigmoid()])
+        layers.extend([nn.Linear(n_units_per_layer, n_latent_dims), nn.Sigmoid()])
         self.model = nn.Sequential(*layers)
 
     def forward(self, x):
@@ -18,7 +61,14 @@ class Binary2BinaryEncoder(nn.Module):
 
 
 class Binary2BinaryDecoder(nn.Module):
-    def __init__(self, latent_dim, output_dim, n_hidden_layers, n_units_per_layer, activation_function=nn.ReLU()):
+    def __init__(
+            self,
+            latent_dim,
+            output_dim,
+            n_hidden_layers,
+            n_units_per_layer,
+            activation_function=nn.LeakyReLU(),
+    ):
         super(Binary2BinaryDecoder, self).__init__()
         layers = [nn.Linear(latent_dim, n_units_per_layer), activation_function]
         for _ in range(n_hidden_layers - 1):
@@ -34,8 +84,10 @@ class Binary2BinaryAutoencoder(nn.Module):
     def __init__(self, input_dim, output_dim, latent_dim, n_hidden_layers, n_units_per_layer,
                  activation_function=nn.ReLU()):
         super(Binary2BinaryAutoencoder, self).__init__()
-        self.encoder = Binary2BinaryEncoder(input_dim, latent_dim, n_hidden_layers, n_units_per_layer, activation_function)
-        self.decoder = Binary2BinaryDecoder(latent_dim, output_dim, n_hidden_layers, n_units_per_layer, activation_function)
+        self.encoder = Binary2BinaryEncoder(input_dim, latent_dim, n_hidden_layers, n_units_per_layer,
+                                            activation_function)
+        self.decoder = Binary2BinaryDecoder(latent_dim, output_dim, n_hidden_layers, n_units_per_layer,
+                                            activation_function)
 
     def forward(self, x, num_fixed=3):
         encoded = self.encoder(x)
@@ -148,3 +200,80 @@ class ContrastiveNet(torch.nn.Module):
         context = torch.cat((z0, z1), -1)
         fakes = self.model(context).squeeze()
         return fakes
+
+
+class Binary2BinaryFeatureNet(torch.nn.Module):
+    def __init__(
+            self,
+            n_actions: int,
+            n_obs_dims: int,
+            n_latent_dims=32,
+            n_hidden_layers=3,
+            n_units_per_layer=128,
+            lr=0.001,
+            weights=None,
+            device=torch.device('cpu')
+    ):
+        super().__init__()
+        if weights is None:
+            weights = {'inv': 0.2, 'dis': 0.2, 'neigh': 0.2, 'dec': 0.2, 'rwd': 0.2,}
+        self.n_actions = n_actions
+        self.n_latent_dims = n_latent_dims
+        self.n_units_per_layer = n_units_per_layer
+        self.n_hidden_layers = n_hidden_layers
+        self.lr = lr
+        self.device = device
+        self.weights = weights
+
+        self.encoder = Binary2BinaryEncoder(
+            n_input_dims=n_obs_dims,
+            n_latent_dims=n_latent_dims,
+            n_hidden_layers=n_hidden_layers,
+            n_units_per_layer=n_units_per_layer,
+        ).to(device)
+
+        if weights['inv'] > 0.0:
+            self.inv_model = InvNet(
+                n_actions=n_actions,
+                n_latent_dims=n_latent_dims,
+                n_units_per_layer=n_units_per_layer,
+                n_hidden_layers=n_hidden_layers,
+            ).to(device)
+        else:
+            self.inv_model = None
+        if weights['dis'] > 0.0:
+            self.discriminator = ContrastiveNet(
+                n_latent_dims=n_latent_dims,
+                n_hidden_layers=1,
+                n_units_per_layer=n_units_per_layer,
+            ).to(device)
+        else:
+            self.discriminator = None
+        if weights['dec'] > 0.0:
+            self.decoder = FlexibleImageDecoder(
+                n_latent_dims=n_latent_dims,
+                img_channels=3,
+                img_size=img_size,
+                initial_scale_factor=initial_scale_factor,
+            ).to(device)
+        else:
+            self.decoder = None
+        if weights['rwd'] > 0.0:
+            self.reward_predictor = RewardPredictor(
+                n_actions=n_actions,
+                n_latent_dims=n_latent_dims,
+                n_units_per_layer=n_units_per_layer,
+                n_hidden_layers=n_hidden_layers,
+            ).to(device)
+        else:
+            self.reward_predictor = None
+
+        self.cross_entropy = torch.nn.CrossEntropyLoss().to(device)
+        self.bce_loss = torch.nn.BCELoss().to(device)
+        self.mse = torch.nn.MSELoss().to(device)
+        self.optimizer = torch.optim.Adam(self.parameters(), lr=self.lr)
+        pass
+
+class Binary2BinaryTrainer:
+    def __init__(self, model_dir: str, model_name: str, device):
+        self.device = device
