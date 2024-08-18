@@ -63,14 +63,14 @@ class Binary2BinaryEncoder(nn.Module):
 class Binary2BinaryDecoder(nn.Module):
     def __init__(
             self,
-            latent_dim,
+            n_latent_dims,
             output_dim,
             n_hidden_layers,
             n_units_per_layer,
             activation_function=nn.LeakyReLU(),
     ):
         super(Binary2BinaryDecoder, self).__init__()
-        layers = [nn.Linear(latent_dim, n_units_per_layer), activation_function]
+        layers = [nn.Linear(n_latent_dims, n_units_per_layer), activation_function]
         for _ in range(n_hidden_layers - 1):
             layers.extend([nn.Linear(n_units_per_layer, n_units_per_layer), activation_function])
         layers.append(nn.Linear(n_units_per_layer, output_dim))
@@ -208,8 +208,6 @@ class Binary2BinaryFeatureNet(torch.nn.Module):
             n_actions: int,
             n_obs_dims: int,
             n_latent_dims=32,
-            n_hidden_layers=3,
-            n_units_per_layer=128,
             lr=0.001,
             weights=None,
             device=torch.device('cpu')
@@ -219,8 +217,6 @@ class Binary2BinaryFeatureNet(torch.nn.Module):
             weights = {'inv': 0.2, 'dis': 0.2, 'neigh': 0.2, 'dec': 0.2, 'rwd': 0.2,}
         self.n_actions = n_actions
         self.n_latent_dims = n_latent_dims
-        self.n_units_per_layer = n_units_per_layer
-        self.n_hidden_layers = n_hidden_layers
         self.lr = lr
         self.device = device
         self.weights = weights
@@ -228,51 +224,86 @@ class Binary2BinaryFeatureNet(torch.nn.Module):
         self.encoder = Binary2BinaryEncoder(
             n_input_dims=n_obs_dims,
             n_latent_dims=n_latent_dims,
-            n_hidden_layers=n_hidden_layers,
-            n_units_per_layer=n_units_per_layer,
+            n_hidden_layers=3,
+            n_units_per_layer=256,
         ).to(device)
 
         if weights['inv'] > 0.0:
             self.inv_model = InvNet(
                 n_actions=n_actions,
                 n_latent_dims=n_latent_dims,
-                n_units_per_layer=n_units_per_layer,
-                n_hidden_layers=n_hidden_layers,
+                n_units_per_layer=3,
+                n_hidden_layers=128,
             ).to(device)
         else:
             self.inv_model = None
+
         if weights['dis'] > 0.0:
             self.discriminator = ContrastiveNet(
                 n_latent_dims=n_latent_dims,
-                n_hidden_layers=1,
-                n_units_per_layer=n_units_per_layer,
+                n_hidden_layers=3,
+                n_units_per_layer=128,
             ).to(device)
         else:
             self.discriminator = None
+
         if weights['dec'] > 0.0:
-            self.decoder = FlexibleImageDecoder(
+            self.decoder = Binary2BinaryDecoder(
                 n_latent_dims=n_latent_dims,
-                img_channels=3,
-                img_size=img_size,
-                initial_scale_factor=initial_scale_factor,
+                output_dim=n_obs_dims,
+                n_hidden_layers=3,
+                n_units_per_layer=256,
             ).to(device)
         else:
             self.decoder = None
+
         if weights['rwd'] > 0.0:
             self.reward_predictor = RewardPredictor(
                 n_actions=n_actions,
                 n_latent_dims=n_latent_dims,
-                n_units_per_layer=n_units_per_layer,
-                n_hidden_layers=n_hidden_layers,
+                n_hidden_layers=3,
+                n_units_per_layer=128,
             ).to(device)
         else:
             self.reward_predictor = None
 
+        self.optimizer = torch.optim.Adam(self.parameters(), lr=self.lr)
+
         self.cross_entropy = torch.nn.CrossEntropyLoss().to(device)
         self.bce_loss = torch.nn.BCELoss().to(device)
         self.mse = torch.nn.MSELoss().to(device)
-        self.optimizer = torch.optim.Adam(self.parameters(), lr=self.lr)
-        pass
+
+    def save(self, checkpoint_path, counter=-1, _counter=-1, performance=0.0):
+        torch.save(
+            {
+                'counter': counter,
+                '_counter': _counter,
+                'encoder': self.encoder.state_dict(),
+                'inv_model': self.inv_model.state_dict() if self.weights['inv'] > 0.0 else None,
+                'discriminator': self.discriminator.state_dict() if self.weights['dis'] > 0.0 else None,
+                'decoder': self.decoder.state_dict() if self.weights['dec'] > 0.0 else None,
+                'reward_predictor': self.reward_predictor.state_dict() if self.weights['rwd'] > 0.0 else None,
+                'optimizer': self.optimizer.state_dict(),
+                'performance': performance,
+                'weights': self.weights,
+            },
+            checkpoint_path,
+        )
+
+    def load(self, checkpoint_path):
+        checkpoint = torch.load(checkpoint_path, map_location=self.device)
+        weights = checkpoint['weights']  # not self
+        self.encoder.load_state_dict(checkpoint['encoder'])
+        if weights['inv'] > 0.0:
+            self.inv_model.load_state_dict(checkpoint['inv_model'])
+        if weights['dis'] > 0.0:
+            self.discriminator.load_state_dict(checkpoint['discriminator'])
+        if weights['dec'] > 0.0:
+            self.decoder.load_state_dict(checkpoint['decoder'])
+        if weights['rwd'] > 0.0:
+            self.reward_predictor.load_state_dict(checkpoint['reward_predictor'])
+        self.optimizer.load_state_dict(checkpoint['optimizer'])
+        return checkpoint['counter'], checkpoint['_counter'], checkpoint['performance']
 
 class Binary2BinaryTrainer:
     def __init__(self, model_dir: str, model_name: str, device):
