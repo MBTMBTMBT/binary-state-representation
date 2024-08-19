@@ -329,11 +329,12 @@ class Binary2BinaryFeatureNet(torch.nn.Module):
         terminate_loss = self.bce_loss(pred_terminated, is_terminated)
 
         # compute neighbour loss
-        distances = torch.norm(z0 - z1, p=2, dim=2)
-        weights = torch.linspace(1.0, 2.0, steps=z0.size(2)).to(z0.device)
+        distances = torch.abs(z0 - z1)
+        weights = torch.linspace(1.0, 2.0, steps=z0.size(1)).to(z0.device)
+        weights = weights.unsqueeze(0)
         weighted_distances = distances * weights
-        weighted_distance = torch.mean(weighted_distances, dim=1)
-        neighbour_loss = torch.mean(labels * torch.pow(weighted_distance, 2))
+        weighted_distance = torch.sum(weighted_distances, dim=1)
+        neighbour_loss = torch.mean(torch.pow(weighted_distance, 2))
 
         # compute total loss
         loss = torch.tensor(0.0).to(self.device)
