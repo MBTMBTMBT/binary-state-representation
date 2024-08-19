@@ -19,9 +19,10 @@ def find_latest_checkpoint(model_dir, start_with='model_epoch_'):
 
 def _fix_bits(x: torch.Tensor, num_keep_dim: int) -> torch.Tensor:
     num_fixed = x.shape[-1] - num_keep_dim
-    # Replace the last 'num_fixed' bits of the encoded output with 0.5
-    fixed_values = torch.full((x.shape[0], num_fixed), 0.5, device=x.device)
-    x[:, -num_fixed:] = fixed_values.detach()  # Detach to prevent gradients for the fixed part
+    if num_fixed > 0:
+        # Replace the last 'num_fixed' bits of the encoded output with 0.5
+        fixed_values = torch.full((x.shape[0], num_fixed), 0.5, device=x.device)
+        x[:, -num_fixed:] = fixed_values.detach()  # Detach to prevent gradients for the fixed part
     return x
 
 
