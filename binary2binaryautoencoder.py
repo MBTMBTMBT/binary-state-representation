@@ -1,8 +1,20 @@
 from typing import Tuple
-
+import os
+import re
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+
+
+def find_latest_checkpoint(model_dir, start_with='model_epoch_'):
+    """Find the latest model checkpoint in the given directory."""
+    checkpoints = [f for f in os.listdir(model_dir) if f.startswith(start_with) and f.endswith('.pth')]
+    if not checkpoints:
+        return None
+
+    # Extracting the epoch number from the model filename using regex
+    checkpoints.sort(key=lambda x: int(re.search(r'(\d+)', x).group()))
+    return os.path.join(model_dir, checkpoints[-1])
 
 
 def _fix_bits(x: torch.Tensor, num_keep_dim: int) -> torch.Tensor:
