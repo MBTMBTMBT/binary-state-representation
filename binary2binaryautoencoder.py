@@ -1,3 +1,5 @@
+from typing import Tuple
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -235,7 +237,7 @@ class Binary2BinaryFeatureNet(torch.nn.Module):
     def forward(self, obs_vec):
         raise NotImplementedError
 
-    def train_batch(
+    def run_batch(
             self,
             obs_vec0: torch.Tensor,
             actions: torch.Tensor,
@@ -243,13 +245,37 @@ class Binary2BinaryFeatureNet(torch.nn.Module):
             rewards: torch.Tensor,
             is_terminated: torch.Tensor,
             num_keep_dim: int,
+            train=True,
     ):
         assert len(obs_vec0) == len(actions) == len(obs_vec1) == len(rewards) == len(is_terminated), "input dimension mismatch"
         assert len(obs_vec0) >= 2, "at least more than 2 samples"
 
-        self.train()
-        self.phi.train()
-        self.optimizer.zero_grad()
+        obs_vec0 = obs_vec0.to(self.device)
+        actions = actions.to(self.device)
+        obs_vec1 = obs_vec1.to(self.device)
+        rewards = rewards.to(self.device)
+        is_terminated = is_terminated.to(self.device)
+
+        torch.set_grad_enabled(train)
+
+        if train:
+            self.train()
+            self.encoder.train()
+            self.decoder.train()
+            self.inv_model.train()
+            self.discriminator.train()
+            self.reward_predictor.train()
+            self.termination_predictor.train()
+            self.optimizer.zero_grad()
+
+        else:
+            self.eval()
+            self.encoder.eval()
+            self.decoder.eval()
+            self.inv_model.eval()
+            self.discriminator.eval()
+            self.reward_predictor.eval()
+            self.termination_predictor.eval()
 
         # encode obs 0, obs 1
         z0 = self.encoder(obs_vec0)
@@ -307,8 +333,9 @@ class Binary2BinaryFeatureNet(torch.nn.Module):
         loss += neighbour_loss * self.weights['neighbour']
 
         # update params
-        loss.backward()
-        self.optimizer.step()
+        if train:
+            loss.backward()
+            self.optimizer.step()
 
         return (
             loss.detach().cpu().item(),
