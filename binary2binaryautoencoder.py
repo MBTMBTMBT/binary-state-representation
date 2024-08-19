@@ -1,43 +1,6 @@
 import torch
 import torch.nn as nn
-import torch.optim as optim
 import torch.nn.functional as F
-
-
-mse_loss = nn.MSELoss()
-cross_entropy = torch.nn.CrossEntropyLoss()
-bce_loss = torch.nn.BCELoss()
-
-
-# mse loss for auto encoder
-def reconstruction_loss(recon_x: torch.Tensor, x: torch.Tensor) -> torch.Tensor:
-    return mse_loss(recon_x, x)
-
-
-# weighted distance loss for pushing neighbour states being similar
-def position_weighted_contrastive_loss(z0: torch.Tensor, z1: torch.Tensor, labels: torch.Tensor) -> torch.Tensor:
-    distances = torch.norm(z0 - z1, p=2, dim=2)
-    n_features = z0.size(2)
-    weights = torch.linspace(2.0, 1.0, steps=n_features).to(z0.device)
-    weighted_distances = distances * weights
-    weighted_distance = torch.mean(weighted_distances, dim=1)
-    loss = torch.mean(labels * torch.pow(weighted_distance, 2))
-    return loss
-
-
-# loss between predicted actions and actual actions from given pairs of state transitions
-def inverse_loss(pred_a: torch.Tensor, a: torch.Tensor) -> torch.Tensor:
-    return cross_entropy(input=pred_a, target=a)
-
-
-# loss for predictions of two states being neighbours or not
-def ratio_loss(labels: torch.Tensor, pred_labels: torch.Tensor) -> torch.Tensor:
-    return bce_loss(input=pred_labels, target=labels.float())
-
-
-# loss for predictions of rewards within state-action-state transitions
-def reward_loss(pred_r: torch.Tensor, r: torch.Tensor) -> torch.Tensor:
-    return mse_loss(pred_r, r)
 
 
 def _fix_bits(x: torch.Tensor, num_keep_dim: int) -> torch.Tensor:
@@ -87,26 +50,6 @@ class Binary2BinaryDecoder(nn.Module):
 
     def forward(self, x):
         return self.model(x)
-
-
-class Binary2BinaryAutoencoder(nn.Module):
-    def __init__(self, input_dim, output_dim, latent_dim, n_hidden_layers, n_units_per_layer,
-                 activation_function=nn.ReLU()):
-        super(Binary2BinaryAutoencoder, self).__init__()
-        self.encoder = Binary2BinaryEncoder(input_dim, latent_dim, n_hidden_layers, n_units_per_layer,
-                                            activation_function)
-        self.decoder = Binary2BinaryDecoder(latent_dim, output_dim, n_hidden_layers, n_units_per_layer,
-                                            activation_function)
-
-    def forward(self, x, num_fixed=3):
-        encoded = self.encoder(x)
-
-        # Replace the last 'num_fixed' bits of the encoded output with 0.5
-        fixed_values = torch.full((encoded.shape[0], num_fixed), 0.5, device=encoded.device)
-        encoded[:, -num_fixed:] = fixed_values.detach()  # Detach to prevent gradients for the fixed part
-
-        decoded = self.decoder(encoded)
-        return encoded, decoded
 
 
 class TerminationPredictor(torch.nn.Module):
@@ -221,7 +164,7 @@ class Binary2BinaryFeatureNet(torch.nn.Module):
     ):
         super().__init__()
         if weights is None:
-            weights = {'inv': 0.2, 'dis': 0.2, 'neigh': 0.2, 'dec': 0.2, 'rwd': 0.2, 'terminate': 0.2}
+            weights = {'inv': 0.2, 'dis': 0.2, 'neighbour': 0.2, 'dec': 0.2, 'rwd': 0.2, 'terminate': 0.2}
         self.n_actions = n_actions
         self.n_latent_dims = n_latent_dims
         self.lr = lr
@@ -281,7 +224,7 @@ class Binary2BinaryFeatureNet(torch.nn.Module):
                 n_units_per_layer=128,
             ).to(device)
         else:
-            self.reward_predictor = None
+            self.termination_predictor = None
 
         self.optimizer = torch.optim.Adam(self.parameters(), lr=self.lr)
 
@@ -291,36 +234,6 @@ class Binary2BinaryFeatureNet(torch.nn.Module):
 
     def forward(self, obs_vec):
         raise NotImplementedError
-
-    def compute_loss(self, x0, x1, z0, z1, a, r=None, d=None):
-        loss = torch.tensor(0.0).to(self.device)
-        inv_loss = self.inverse_loss(z0, z1, a) if self.weights['inv'] > 0.0 else torch.tensor(0.0)
-        ratio_loss = self.ratio_loss(z0, z1) if self.weights['dis'] > 0.0 else torch.tensor(0.0)
-        neighbour_loss = self.mse(z0, z1) if self.weights['neighbour'] > 0.0 else torch.tensor(0.0)
-        pixel_loss = 0.5 * (self.pixel_loss(x0, z0) + self.pixel_loss(x1, z1)) if self.weights[
-                                                                                      'dec'] > 0.0 else torch.tensor(
-            0.0)
-        loss += self.weights['inv'] * inv_loss
-        loss += self.weights['dis'] * ratio_loss
-        loss += self.weights['neighbour'] * neighbour_loss
-        loss += self.weights['dec'] * pixel_loss
-
-        # Initialize reward_loss and demo_loss to zero
-        reward_loss = torch.tensor(0.0)
-        demo_loss = torch.tensor(0.0)
-
-        # Compute reward_loss if 'r' is not None and add it to the total loss
-        if r is not None:
-            reward_loss = self.reward_loss(z0, z1, a, r) if self.weights['rwd'] > 0.0 else torch.tensor(0.0)
-            loss += self.weights['rwd'] * reward_loss
-
-        # Compute demo_loss if 'd' is not None and add it to the total loss
-        if d is not None:
-            demo_loss = self.demo_loss(z0, z1, d) if self.weights['demo'] > 0.0 else torch.tensor(0.0)
-            loss += self.weights['demo'] * demo_loss
-
-        # Return the total loss and the individual components
-        return loss, inv_loss, neighbour_loss, ratio_loss, pixel_loss, reward_loss, demo_loss
 
     def train_batch(
             self,
@@ -369,6 +282,10 @@ class Binary2BinaryFeatureNet(torch.nn.Module):
         ), dim=0)
         ratio_loss = self.bce_loss(pred_fakes, labels)
 
+        # compute reward loss
+        pred_rwds = self.reward_predictor(z0, actions, z1)
+        reward_loss = self.mse(pred_rwds, rewards)
+
         # compute terminate loss
         pred_terminated = self.termination_predictor(z1)
         terminate_loss = self.bce_loss(pred_terminated, is_terminated)
@@ -380,14 +297,28 @@ class Binary2BinaryFeatureNet(torch.nn.Module):
         weighted_distance = torch.mean(weighted_distances, dim=1)
         neighbour_loss = torch.mean(labels * torch.pow(weighted_distance, 2))
 
-        z0 = self.phi(x0)
-        z1 = self.phi(x1)
-        # z1_hat = self.fwd_model(z0, a)
-        loss, inv_loss, neighbour_loss, ratio_loss, pixel_loss, reward_loss, demo_loss = self.compute_loss(x0, x1, z0,
-                                                                                                           z1, a, r, d)
+        # compute total loss
+        loss = torch.tensor(0.0).to(self.device)
+        loss += rec_loss * self.weights['dec']
+        loss += inv_loss * self.weights['inv']
+        loss += ratio_loss * self.weights['dis']
+        loss += reward_loss * self.weights['rwd']
+        loss += terminate_loss * self.weights['terminate']
+        loss += neighbour_loss * self.weights['neighbour']
+
+        # update params
         loss.backward()
         self.optimizer.step()
-        return loss.detach().cpu().item(), inv_loss.detach().cpu().item(), neighbour_loss.detach().cpu().item(), ratio_loss.detach().cpu().item(), pixel_loss.detach().cpu().item(), reward_loss.detach().cpu().item(), demo_loss.detach().cpu().item()
+
+        return (
+            loss.detach().cpu().item(),
+            rec_loss.detach().cpu().item(),
+            inv_loss.detach().cpu().item(),
+            ratio_loss.detach().cpu().item(),
+            reward_loss.detach().cpu().item(),
+            terminate_loss.detach().cpu().item(),
+            neighbour_loss.detach().cpu().item(),
+        )
 
     def save(self, checkpoint_path, counter=-1, _counter=-1, performance=0.0):
         torch.save(
@@ -423,7 +354,3 @@ class Binary2BinaryFeatureNet(torch.nn.Module):
             self.termination_predictor.load_state_dict(checkpoint['termination_predictor'])
         self.optimizer.load_state_dict(checkpoint['optimizer'])
         return checkpoint['counter'], checkpoint['_counter'], checkpoint['performance']
-
-class Binary2BinaryTrainer:
-    def __init__(self, model_dir: str, model_name: str, device):
-        self.device = device
