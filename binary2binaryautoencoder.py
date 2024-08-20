@@ -30,10 +30,11 @@ def _custom_cross_entropy_loss(logits, targets, same_states: List[bool]):
     # 0 - left, 1 - right --- these two matters (because they won't result in being the same state)
     weights = torch.tensor([1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0], dtype=torch.float, device=logits.device).unsqueeze(0)
     log_probs = F.log_softmax(logits, dim=1)
+    modified_log_probs = log_probs.clone()
     for i, same in enumerate(same_states):
         if same:
-            log_probs[i] = log_probs[i] * weights
-    batch_loss = -log_probs[torch.arange(targets.size(0)), targets]
+            modified_log_probs[i] = log_probs[i] * weights
+    batch_loss = -modified_log_probs[torch.arange(targets.size(0)), targets]
     return batch_loss.mean()
 
 
