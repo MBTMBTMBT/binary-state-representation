@@ -334,7 +334,7 @@ class Binary2BinaryFeatureNet(torch.nn.Module):
 
         # compute neighbour loss
         distances = torch.abs(z0 - z1)
-        weights = torch.linspace(1.0, 2.0, steps=z0.size(1)).to(z0.device)
+        weights = torch.linspace(2.0, 0.0, steps=z0.size(1)).to(z0.device)
         weights = weights.unsqueeze(0)
         weighted_distances = distances * weights
         weighted_distance = torch.sum(weighted_distances, dim=1)
