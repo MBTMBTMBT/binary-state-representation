@@ -1,4 +1,4 @@
-from typing import Tuple
+from typing import Tuple, List
 import os
 import re
 import torch
@@ -24,6 +24,17 @@ def _fix_bits(x: torch.Tensor, num_keep_dim: int) -> torch.Tensor:
         fixed_values = torch.full((x.shape[0], num_fixed), 0.5, device=x.device)
         x[:, -num_fixed:] = fixed_values.detach()  # Detach to prevent gradients for the fixed part
     return x
+
+
+def _custom_cross_entropy_loss(logits, targets, same_states: List[bool]):
+    # 0 - left, 1 - right --- these two matters (because they won't result in being the same state)
+    weights = torch.tensor([1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0], dtype=torch.float, device=logits.device).unsqueeze(0)
+    log_probs = F.log_softmax(logits, dim=1)
+    for i, same in enumerate(same_states):
+        if same:
+            log_probs[i] = log_probs[i] * weights
+    batch_loss = -log_probs[torch.arange(targets.size(0)), targets]
+    return batch_loss.mean()
 
 
 class Binary2BinaryEncoder(nn.Module):
@@ -310,7 +321,11 @@ class Binary2BinaryFeatureNet(torch.nn.Module):
 
         # compute inverse loss
         pred_actions = self.inv_model(z0, z1)
-        inv_loss = self.cross_entropy(pred_actions, actions)
+        # need to handle the case that it is transferred into the same state
+        differences = z0 - z1
+        norms = torch.norm(differences, p=2, dim=1)
+        same_states = list(norms.detach().cpu().numpy() < 0.5)
+        inv_loss = _custom_cross_entropy_loss(pred_actions, actions, same_states)
 
         # compute ratio loss
         # real transitions = 1s; fake transitions = 0s
