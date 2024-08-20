@@ -42,7 +42,9 @@ class Binary2BinaryEncoder(nn.Module):
         layers.extend([nn.Linear(n_units_per_layer, n_latent_dims), nn.Sigmoid()])
         self.model = nn.Sequential(*layers)
 
-    def forward(self, x):
+        self.num_output_dims = n_latent_dims
+
+    def forward(self, x) -> torch.Tensor:
         encoded = self.model(x)
         encoded_binary = (encoded > 0.5).float().detach() + encoded - encoded.detach()
         return encoded_binary
