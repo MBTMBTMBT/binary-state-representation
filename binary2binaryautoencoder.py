@@ -205,7 +205,7 @@ class Binary2BinaryFeatureNet(torch.nn.Module):
             n_input_dims=n_obs_dims,
             n_latent_dims=n_latent_dims,
             n_hidden_layers=3,
-            n_units_per_layer=256,
+            n_units_per_layer=4096,
         ).to(device)
 
         if weights['inv'] > 0.0:
@@ -213,7 +213,7 @@ class Binary2BinaryFeatureNet(torch.nn.Module):
                 n_actions=n_actions,
                 n_latent_dims=n_latent_dims,
                 n_units_per_layer=3,
-                n_hidden_layers=128,
+                n_hidden_layers=256,
             ).to(device)
         else:
             self.inv_model = None
@@ -222,7 +222,7 @@ class Binary2BinaryFeatureNet(torch.nn.Module):
             self.discriminator = ContrastiveNet(
                 n_latent_dims=n_latent_dims,
                 n_hidden_layers=3,
-                n_units_per_layer=128,
+                n_units_per_layer=256,
             ).to(device)
         else:
             self.discriminator = None
@@ -232,7 +232,7 @@ class Binary2BinaryFeatureNet(torch.nn.Module):
                 n_latent_dims=n_latent_dims,
                 output_dim=n_obs_dims,
                 n_hidden_layers=3,
-                n_units_per_layer=256,
+                n_units_per_layer=4096,
             ).to(device)
         else:
             self.decoder = None
@@ -242,7 +242,7 @@ class Binary2BinaryFeatureNet(torch.nn.Module):
                 n_actions=n_actions,
                 n_latent_dims=n_latent_dims,
                 n_hidden_layers=3,
-                n_units_per_layer=128,
+                n_units_per_layer=256,
             ).to(device)
         else:
             self.reward_predictor = None
@@ -250,8 +250,8 @@ class Binary2BinaryFeatureNet(torch.nn.Module):
         if weights['terminate'] > 0.0:
             self.termination_predictor = TerminationPredictor(
                 n_latent_dims=n_latent_dims,
-                n_hidden_layers=1,
-                n_units_per_layer=128,
+                n_hidden_layers=3,
+                n_units_per_layer=256,
             ).to(device)
         else:
             self.termination_predictor = None
@@ -260,6 +260,7 @@ class Binary2BinaryFeatureNet(torch.nn.Module):
 
         self.cross_entropy = torch.nn.CrossEntropyLoss().to(device)
         self.bce_loss = torch.nn.BCELoss().to(device)
+        self.bce_loss_ = torch.nn.BCELoss(reduction="none").to(device)
         self.mse_loss = torch.nn.MSELoss().to(device)
 
     def forward(self, obs_vec):
@@ -318,6 +319,9 @@ class Binary2BinaryFeatureNet(torch.nn.Module):
         # compute reconstruct loss
         decoded_z0 = self.decoder(z0)
         decoded_z1 = self.decoder(z1)
+        # rec_losses = self.bce_loss_(torch.cat((decoded_z0, decoded_z1), dim=0), torch.cat((obs_vec0, obs_vec1), dim=0))
+        # rec_losses = torch.sum(rec_losses, dim=1)
+        # rec_loss = torch.mean(rec_losses)
         rec_loss = self.bce_loss(torch.cat((decoded_z0, decoded_z1), dim=0), torch.cat((obs_vec0, obs_vec1), dim=0))
 
         # compute inverse loss
@@ -350,7 +354,7 @@ class Binary2BinaryFeatureNet(torch.nn.Module):
 
         # compute neighbour loss
         distances = torch.abs(z0 - z1)
-        weights = torch.linspace(2.0, 0.0, steps=z0.size(1)).to(z0.device)
+        weights = torch.linspace(2.0, 1.0, steps=z0.size(1)).to(z0.device)
         weights = weights.unsqueeze(0)
         weighted_distances = distances * weights
         weighted_distance = torch.sum(weighted_distances, dim=1)
