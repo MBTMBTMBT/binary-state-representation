@@ -1,6 +1,9 @@
+import random
 from typing import Tuple, List
 import os
 import re
+
+import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -38,22 +41,47 @@ def _custom_cross_entropy_loss(logits, targets, same_states: List[bool]):
     return batch_loss.mean()
 
 
-class Binary2BinaryEncoder(nn.Module):
-    def __init__(
-            self,
-            n_input_dims,
-            n_latent_dims,
-            n_hidden_layers,
-            n_units_per_layer,
-            activation_function=nn.LeakyReLU(),
-    ):
-        super(Binary2BinaryEncoder, self).__init__()
-        layers = [nn.Linear(n_input_dims, n_units_per_layer), activation_function]
-        for _ in range(n_hidden_layers - 1):
-            layers.extend([nn.Linear(n_units_per_layer, n_units_per_layer), activation_function])
-        layers.extend([nn.Linear(n_units_per_layer, n_latent_dims), nn.Sigmoid()])
-        self.model = nn.Sequential(*layers)
+# class Binary2BinaryEncoder(nn.Module):
+#     def __init__(
+#             self,
+#             n_input_dims,
+#             n_latent_dims,
+#             n_hidden_layers,
+#             n_units_per_layer,
+#             activation_function=nn.LeakyReLU(),
+#     ):
+#         super(Binary2BinaryEncoder, self).__init__()
+#         layers = [nn.Linear(n_input_dims, n_units_per_layer), activation_function]
+#         for _ in range(n_hidden_layers - 1):
+#             layers.extend([nn.Linear(n_units_per_layer, n_units_per_layer), activation_function])
+#         layers.extend([nn.Linear(n_units_per_layer, n_latent_dims), nn.Sigmoid()])
+#         self.model = nn.Sequential(*layers)
+#
+#         self.num_output_dims = n_latent_dims
+#
+#     def forward(self, x) -> torch.Tensor:
+#         encoded = self.model(x)
+#         encoded_binary = (encoded > 0.5).float().detach() + encoded - encoded.detach()
+#         return encoded_binary
 
+
+class Binary2BinaryEncoder(nn.Module):
+    def __init__(self, n_input_dims, n_latent_dims, n_hidden_layers, n_units_per_layer, activation_function=nn.LeakyReLU()):
+        super(Binary2BinaryEncoder, self).__init__()
+        layers = []
+        layers.append(nn.Linear(n_input_dims, n_units_per_layer))
+        layers.append(nn.BatchNorm1d(n_units_per_layer))
+        layers.append(activation_function())
+
+        for _ in range(n_hidden_layers - 1):
+            layers.append(nn.Linear(n_units_per_layer, n_units_per_layer))
+            layers.append(nn.BatchNorm1d(n_units_per_layer))
+            layers.append(activation_function())
+
+        layers.append(nn.Linear(n_units_per_layer, n_latent_dims))
+        layers.append(nn.Sigmoid())
+
+        self.model = nn.Sequential(*layers)
         self.num_output_dims = n_latent_dims
 
     def forward(self, x) -> torch.Tensor:
@@ -212,7 +240,7 @@ class Binary2BinaryFeatureNet(torch.nn.Module):
             self.inv_model = InvNet(
                 n_actions=n_actions,
                 n_latent_dims=n_latent_dims,
-                n_units_per_layer=3,
+                n_units_per_layer=1,
                 n_hidden_layers=256,
             ).to(device)
         else:
@@ -221,7 +249,7 @@ class Binary2BinaryFeatureNet(torch.nn.Module):
         if weights['dis'] > 0.0:
             self.discriminator = ContrastiveNet(
                 n_latent_dims=n_latent_dims,
-                n_hidden_layers=3,
+                n_hidden_layers=1,
                 n_units_per_layer=256,
             ).to(device)
         else:
@@ -231,8 +259,8 @@ class Binary2BinaryFeatureNet(torch.nn.Module):
             self.decoder = Binary2BinaryDecoder(
                 n_latent_dims=n_latent_dims,
                 output_dim=n_obs_dims,
-                n_hidden_layers=3,
-                n_units_per_layer=4096,
+                n_hidden_layers=1,
+                n_units_per_layer=256,
             ).to(device)
         else:
             self.decoder = None
@@ -241,7 +269,7 @@ class Binary2BinaryFeatureNet(torch.nn.Module):
             self.reward_predictor = RewardPredictor(
                 n_actions=n_actions,
                 n_latent_dims=n_latent_dims,
-                n_hidden_layers=3,
+                n_hidden_layers=1,
                 n_units_per_layer=256,
             ).to(device)
         else:
@@ -250,7 +278,7 @@ class Binary2BinaryFeatureNet(torch.nn.Module):
         if weights['terminate'] > 0.0:
             self.termination_predictor = TerminationPredictor(
                 n_latent_dims=n_latent_dims,
-                n_hidden_layers=3,
+                n_hidden_layers=1,
                 n_units_per_layer=256,
             ).to(device)
         else:
@@ -316,6 +344,23 @@ class Binary2BinaryFeatureNet(torch.nn.Module):
         idx = torch.randperm(len(obs_vec1))
         fake_z1 = z1.view(len(z1), -1)[idx].view(z1.size())
 
+        # def numpy_binary_array_to_string(binary_array):
+        #     binary_array = np.array(binary_array, dtype=np.uint8)
+        #     binary_string = ''.join(binary_array.astype(str))
+        #     return binary_string
+        #
+        # o0_list = [hash(numpy_binary_array_to_string(code)) for code in obs_vec0.detach().cpu().numpy()]
+        # o1_list = [hash(numpy_binary_array_to_string(code)) for code in obs_vec1.detach().cpu().numpy()]
+        # z0_list = [hash(numpy_binary_array_to_string(code)) for code in z0.detach().cpu().numpy()]
+        # z1_list = [hash(numpy_binary_array_to_string(code)) for code in z1.detach().cpu().numpy()]
+        # fake_z1_list = [hash(numpy_binary_array_to_string(code)) for code in fake_z1.detach().cpu().numpy()]
+        # print(o0_list)
+        # print(o1_list)
+        # print(z0_list)
+        # print(z1_list)
+        # print(fake_z1_list)
+        # exit()
+
         # compute reconstruct loss
         decoded_z0 = self.decoder(z0)
         decoded_z1 = self.decoder(z1)
@@ -338,10 +383,21 @@ class Binary2BinaryFeatureNet(torch.nn.Module):
             torch.ones(len(z1), device=z1.device),
             torch.zeros(len(fake_z1), device=fake_z1.device),
         ), dim=0)
-        pred_fakes = torch.cat((
-            self.discriminator(z0, z1),
-            self.discriminator(z0, fake_z1),
+        z0_double = torch.cat((
+            z0,
+            z0,
         ), dim=0)
+        z1_and_fakes = torch.cat((
+            z1,
+            fake_z1,
+        ), dim=0)
+        # pred_fakes = torch.cat((
+        #     self.discriminator(z0, z1),
+        #     self.discriminator(z0, fake_z1),
+        # ), dim=0)
+        rand_idx = random.randint(0, len(z1) - 1)
+        labels = labels[rand_idx:rand_idx+len(z1), ...]
+        pred_fakes = self.discriminator(z0_double[rand_idx:rand_idx+len(z1), ...], z1_and_fakes[rand_idx:rand_idx+len(z1), ...])
         ratio_loss = self.bce_loss(pred_fakes, labels)
 
         # compute reward loss
