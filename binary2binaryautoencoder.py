@@ -79,7 +79,7 @@ class Binary2BinaryDecoder(nn.Module):
         self.model = nn.Sequential(*layers)
 
     def forward(self, x):
-        return self.model(x)
+        return F.sigmoid(self.model(x))
 
 
 class TerminationPredictor(torch.nn.Module):
@@ -260,7 +260,7 @@ class Binary2BinaryFeatureNet(torch.nn.Module):
 
         self.cross_entropy = torch.nn.CrossEntropyLoss().to(device)
         self.bce_loss = torch.nn.BCELoss().to(device)
-        self.mse = torch.nn.MSELoss().to(device)
+        self.mse_loss = torch.nn.MSELoss().to(device)
 
     def forward(self, obs_vec):
         raise NotImplementedError
@@ -318,7 +318,7 @@ class Binary2BinaryFeatureNet(torch.nn.Module):
         # compute reconstruct loss
         decoded_z0 = self.decoder(z0)
         decoded_z1 = self.decoder(z1)
-        rec_loss = self.mse(torch.cat((decoded_z0, decoded_z1), dim=0), torch.cat((obs_vec0, obs_vec1), dim=0))
+        rec_loss = self.bce_loss(torch.cat((decoded_z0, decoded_z1), dim=0), torch.cat((obs_vec0, obs_vec1), dim=0))
 
         # compute inverse loss
         pred_actions = self.inv_model(z0, z1)
@@ -342,7 +342,7 @@ class Binary2BinaryFeatureNet(torch.nn.Module):
 
         # compute reward loss
         pred_rwds = self.reward_predictor(z0, actions, z1)
-        reward_loss = self.mse(pred_rwds, rewards)
+        reward_loss = self.mse_loss(pred_rwds, rewards)
 
         # compute terminate loss
         pred_terminated = self.termination_predictor(z1)
