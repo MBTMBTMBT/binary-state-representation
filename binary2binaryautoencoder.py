@@ -68,10 +68,7 @@ def _custom_cross_entropy_loss(logits, targets, same_states: List[bool]):
 class Binary2BinaryEncoder(nn.Module):
     def __init__(self, n_input_dims, n_latent_dims, n_hidden_layers, n_units_per_layer, activation_function=nn.LeakyReLU()):
         super(Binary2BinaryEncoder, self).__init__()
-        layers = []
-        layers.append(nn.Linear(n_input_dims, n_units_per_layer))
-        layers.append(nn.BatchNorm1d(n_units_per_layer))
-        layers.append(activation_function())
+        layers = [nn.Linear(n_input_dims, n_units_per_layer), nn.BatchNorm1d(n_units_per_layer), activation_function()]
 
         for _ in range(n_hidden_layers - 1):
             layers.append(nn.Linear(n_units_per_layer, n_units_per_layer))
