@@ -230,7 +230,7 @@ class Binary2BinaryFeatureNet(torch.nn.Module):
             n_input_dims=n_obs_dims,
             n_latent_dims=n_latent_dims,
             n_hidden_layers=3,
-            n_units_per_layer=4096,
+            n_units_per_layer=8192,
         ).to(device)
 
         if weights['inv'] > 0.0:
@@ -315,20 +315,31 @@ class Binary2BinaryFeatureNet(torch.nn.Module):
         if train:
             self.train()
             self.encoder.train()
-            self.decoder.train()
-            self.inv_model.train()
-            self.discriminator.train()
-            self.reward_predictor.train()
-            self.termination_predictor.train()
+            if self.decoder is not None:
+                self.decoder.train()
+            if self.inv_model is not None:
+                self.inv_model.train()
+            if self.discriminator is not None:
+                self.discriminator.train()
+            if self.reward_predictor is not None:
+                self.reward_predictor.train()
+            if self.termination_predictor is not None:
+                self.termination_predictor.train()
             self.optimizer.zero_grad()
 
         else:
             self.eval()
             self.encoder.eval()
-            self.decoder.eval()
-            self.inv_model.eval()
-            self.discriminator.eval()
-            self.reward_predictor.eval()
+            if self.decoder is not None:
+                self.decoder.eval()
+            if self.inv_model is not None:
+                self.inv_model.eval()
+            if self.discriminator is not None:
+                self.discriminator.eval()
+            if self.reward_predictor is not None:
+                self.reward_predictor.eval()
+            if self.termination_predictor is not None:
+                self.termination_predictor.eval()
             self.termination_predictor.eval()
 
         # encode obs 0, obs 1
@@ -358,52 +369,62 @@ class Binary2BinaryFeatureNet(torch.nn.Module):
         # print(fake_z1_list)
         # exit()
 
-        # compute reconstruct loss
-        decoded_z0 = self.decoder(z0)
-        decoded_z1 = self.decoder(z1)
-        # rec_losses = self.bce_loss_(torch.cat((decoded_z0, decoded_z1), dim=0), torch.cat((obs_vec0, obs_vec1), dim=0))
-        # rec_losses = torch.sum(rec_losses, dim=1)
-        # rec_loss = torch.mean(rec_losses)
-        rec_loss = self.bce_loss(torch.cat((decoded_z0, decoded_z1), dim=0), torch.cat((obs_vec0, obs_vec1), dim=0))
+        rec_loss = torch.tensor(0.0).to(self.device)
+        if self.decoder:
+            # compute reconstruct loss
+            decoded_z0 = self.decoder(z0)
+            decoded_z1 = self.decoder(z1)
+            # rec_losses = self.bce_loss_(torch.cat((decoded_z0, decoded_z1), dim=0), torch.cat((obs_vec0, obs_vec1), dim=0))
+            # rec_losses = torch.sum(rec_losses, dim=1)
+            # rec_loss = torch.mean(rec_losses)
+            rec_loss = self.bce_loss(torch.cat((decoded_z0, decoded_z1), dim=0), torch.cat((obs_vec0, obs_vec1), dim=0))
 
-        # compute inverse loss
-        pred_actions = self.inv_model(z0, z1)
-        # need to handle the case that it is transferred into the same state
-        differences = z0 - z1
-        norms = torch.norm(differences, p=2, dim=1)
-        same_states = list(norms.detach().cpu().numpy() < 0.5)
-        inv_loss = _custom_cross_entropy_loss(pred_actions, actions, same_states)
+        inv_loss = torch.tensor(0.0).to(self.device)
+        if self.inv_model:
+            # compute inverse loss
+            pred_actions = self.inv_model(z0, z1)
+            # need to handle the case that it is transferred into the same state
+            differences = z0 - z1
+            norms = torch.norm(differences, p=2, dim=1)
+            same_states = list(norms.detach().cpu().numpy() < 0.5)
+            inv_loss = _custom_cross_entropy_loss(pred_actions, actions, same_states)
 
-        # compute ratio loss
-        # real transitions = 1s; fake transitions = 0s
-        labels = torch.cat((
-            torch.ones(len(z1), device=z1.device),
-            torch.zeros(len(fake_z1), device=fake_z1.device),
-        ), dim=0)
-        z0_double = torch.cat((
-            z0,
-            z0,
-        ), dim=0)
-        z1_and_fakes = torch.cat((
-            z1,
-            fake_z1,
-        ), dim=0)
-        # pred_fakes = torch.cat((
-        #     self.discriminator(z0, z1),
-        #     self.discriminator(z0, fake_z1),
-        # ), dim=0)
-        rand_idx = random.randint(0, len(z1) - 1)
-        labels = labels[rand_idx:rand_idx+len(z1), ...]
-        pred_fakes = self.discriminator(z0_double[rand_idx:rand_idx+len(z1), ...], z1_and_fakes[rand_idx:rand_idx+len(z1), ...])
-        ratio_loss = self.bce_loss(pred_fakes, labels)
+        ratio_loss = torch.tensor(0.0).to(self.device)
+        if self.discriminator:
+            # compute ratio loss
+            # real transitions = 1s; fake transitions = 0s
+            labels = torch.cat((
+                torch.ones(len(z1), device=z1.device),
+                torch.zeros(len(fake_z1), device=fake_z1.device),
+            ), dim=0)
+            z0_double = torch.cat((
+                z0,
+                z0,
+            ), dim=0)
+            z1_and_fakes = torch.cat((
+                z1,
+                fake_z1,
+            ), dim=0)
+            # pred_fakes = torch.cat((
+            #     self.discriminator(z0, z1),
+            #     self.discriminator(z0, fake_z1),
+            # ), dim=0)
+            rand_idx = random.randint(0, len(z1) - 1)
+            labels = labels[rand_idx:rand_idx+len(z1), ...]
+            pred_fakes = self.discriminator(z0_double[rand_idx:rand_idx+len(z1), ...], z1_and_fakes[rand_idx:rand_idx+len(z1), ...])
+            ratio_loss = self.bce_loss(pred_fakes, labels)
 
-        # compute reward loss
-        pred_rwds = self.reward_predictor(z0, actions, z1)
-        reward_loss = self.mse_loss(pred_rwds, rewards)
+        reward_loss = torch.tensor(0.0).to(self.device)
+        if self.reward_predictor:
+            # compute reward loss
+            pred_rwds = self.reward_predictor(z0, actions, z1)
+            reward_loss = self.mse_loss(pred_rwds, rewards)
 
-        # compute terminate loss
-        pred_terminated = self.termination_predictor(z1)
-        terminate_loss = self.bce_loss(pred_terminated, is_terminated)
+        terminate_loss = torch.tensor(0.0).to(self.device)
+        if self.termination_predictor:
+            # compute terminate loss
+            pred_terminated = self.termination_predictor(z1)
+            terminate_loss = self.bce_loss(pred_terminated, is_terminated)
 
         # compute neighbour loss
         distances = torch.abs(z0 - z1)
