@@ -22,11 +22,12 @@ def find_latest_checkpoint(model_dir, start_with='model_epoch_'):
 
 def _fix_bits(x: torch.Tensor, num_keep_dim: int) -> torch.Tensor:
     num_fixed = x.shape[-1] - num_keep_dim
+    x_ = torch.clone(x)
     if num_fixed > 0:
         # Replace the last 'num_fixed' bits of the encoded output with 0.5
         fixed_values = torch.full((x.shape[0], num_fixed), 0.5, device=x.device)
-        x[:, -num_fixed:] = fixed_values.detach()  # Detach to prevent gradients for the fixed part
-    return x
+        x_[:, -num_fixed:] = fixed_values.detach()  # Detach to prevent gradients for the fixed part
+    return x_
 
 
 def _custom_cross_entropy_loss(logits, targets, same_states: List[bool]):
@@ -268,7 +269,7 @@ class Binary2BinaryFeatureNet(torch.nn.Module):
             n_input_dims=n_obs_dims,
             n_latent_dims=n_latent_dims,
             n_hidden_layers=3,
-            n_units_per_layer=8192,
+            n_units_per_layer=512,
         ).to(device)
 
         if weights['inv'] > 0.0:
@@ -381,10 +382,10 @@ class Binary2BinaryFeatureNet(torch.nn.Module):
             self.termination_predictor.eval()
 
         # encode obs 0, obs 1
-        z0 = self.encoder(obs_vec0, slope=self.slope, binary_output=self.use_bin)
-        z0 = _fix_bits(z0, num_keep_dim)
-        z1 = self.encoder(obs_vec1, slope=self.slope, binary_output=self.use_bin)
-        z1 = _fix_bits(z1, num_keep_dim)
+        z0_ = self.encoder(obs_vec0, slope=self.slope, binary_output=self.use_bin)
+        z0 = _fix_bits(z0_, num_keep_dim)
+        z1_ = self.encoder(obs_vec1, slope=self.slope, binary_output=self.use_bin)
+        z1 = _fix_bits(z1_, num_keep_dim)
 
         # get fake z1
         idx = torch.randperm(len(obs_vec1))
