@@ -65,9 +65,34 @@ def _custom_cross_entropy_loss(logits, targets, same_states: List[bool]):
 #         return encoded_binary
 
 
+# class Binary2BinaryEncoder(nn.Module):
+#     def __init__(self, n_input_dims, n_latent_dims, n_hidden_layers, n_units_per_layer, activation_function=nn.LeakyReLU()):
+#         super(Binary2BinaryEncoder, self).__init__()
+#         layers = [nn.Linear(n_input_dims, n_units_per_layer), nn.BatchNorm1d(n_units_per_layer), activation_function]
+#
+#         for _ in range(n_hidden_layers - 1):
+#             layers.append(nn.Linear(n_units_per_layer, n_units_per_layer))
+#             layers.append(nn.BatchNorm1d(n_units_per_layer))
+#             layers.append(activation_function)
+#
+#         layers.append(nn.Linear(n_units_per_layer, n_latent_dims))
+#         layers.append(nn.Sigmoid())
+#
+#         self.model = nn.Sequential(*layers)
+#         self.num_output_dims = n_latent_dims
+#
+#     def forward(self, x) -> torch.Tensor:
+#         encoded = self.model(x)
+#         encoded_binary = (encoded > 0.5).float().detach() + encoded - encoded.detach()
+#         return encoded_binary
+
+
 class Binary2BinaryEncoder(nn.Module):
-    def __init__(self, n_input_dims, n_latent_dims, n_hidden_layers, n_units_per_layer, activation_function=nn.LeakyReLU()):
+    def __init__(self, n_input_dims, n_latent_dims, n_hidden_layers, n_units_per_layer,
+                 activation_function=nn.LeakyReLU()):
         super(Binary2BinaryEncoder, self).__init__()
+
+        # Initialize layers including the input layer, hidden layers, and the output linear layer
         layers = [nn.Linear(n_input_dims, n_units_per_layer), nn.BatchNorm1d(n_units_per_layer), activation_function]
 
         for _ in range(n_hidden_layers - 1):
@@ -76,15 +101,24 @@ class Binary2BinaryEncoder(nn.Module):
             layers.append(activation_function)
 
         layers.append(nn.Linear(n_units_per_layer, n_latent_dims))
-        layers.append(nn.Sigmoid())
 
         self.model = nn.Sequential(*layers)
-        self.num_output_dims = n_latent_dims
 
-    def forward(self, x) -> torch.Tensor:
+    def forward(self, x, slope=1.0, binary_output=True) -> torch.Tensor:
+        # Process the input through the model to get latent representation
         encoded = self.model(x)
-        encoded_binary = (encoded > 0.5).float().detach() + encoded - encoded.detach()
-        return encoded_binary
+
+        # Apply sigmoid function with the adjustable slope
+        activated = torch.sigmoid(slope * encoded)
+
+        # Conditional output formatting based on binary_output flag
+        if binary_output:
+            # Output binary version using STE-like method for backprop compatibility
+            encoded_binary = (activated > 0.5).float().detach() + activated - activated.detach()
+            return encoded_binary
+        else:
+            # Output continuous values
+            return activated
 
 
 class Binary2BinaryDecoder(nn.Module):
