@@ -249,7 +249,9 @@ class Binary2BinaryFeatureNet(torch.nn.Module):
             n_latent_dims=32,
             lr=0.001,
             weights=None,
-            device=torch.device('cpu')
+            slope=1.0,
+            use_bin=True,
+            device=torch.device('cpu'),
     ):
         super().__init__()
         if weights is None:
@@ -259,6 +261,8 @@ class Binary2BinaryFeatureNet(torch.nn.Module):
         self.lr = lr
         self.device = device
         self.weights = weights
+        self.slope = slope
+        self.use_bin = use_bin
 
         self.encoder = Binary2BinaryEncoder(
             n_input_dims=n_obs_dims,
@@ -377,9 +381,9 @@ class Binary2BinaryFeatureNet(torch.nn.Module):
             self.termination_predictor.eval()
 
         # encode obs 0, obs 1
-        z0 = self.encoder(obs_vec0)
+        z0 = self.encoder(obs_vec0, slope=self.slope, binary_output=self.use_bin)
         z0 = _fix_bits(z0, num_keep_dim)
-        z1 = self.encoder(obs_vec1)
+        z1 = self.encoder(obs_vec1, slope=self.slope, binary_output=self.use_bin)
         z1 = _fix_bits(z1, num_keep_dim)
 
         # get fake z1
