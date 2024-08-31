@@ -30,16 +30,27 @@ def _fix_bits(x: torch.Tensor, num_keep_dim: int) -> torch.Tensor:
     return x_
 
 
+# def _custom_cross_entropy_loss(logits, targets, same_states: List[bool]):
+#     # 0 - left, 1 - right --- these two matters (because they won't result in being the same state)
+#     weights = torch.tensor([1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0], dtype=torch.float, device=logits.device).unsqueeze(0)
+#     log_probs = F.log_softmax(logits, dim=1)
+#     modified_log_probs = log_probs.clone()
+#     for i, same in enumerate(same_states):
+#         if same:
+#             modified_log_probs[i] = log_probs[i] * weights
+#     batch_loss = -modified_log_probs[torch.arange(targets.size(0)), targets]
+#     return batch_loss.mean()
+
+
 def _custom_cross_entropy_loss(logits, targets, same_states: List[bool]):
-    # 0 - left, 1 - right --- these two matters (because they won't result in being the same state)
-    weights = torch.tensor([1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0], dtype=torch.float, device=logits.device).unsqueeze(0)
-    log_probs = F.log_softmax(logits, dim=1)
-    modified_log_probs = log_probs.clone()
-    for i, same in enumerate(same_states):
-        if same:
-            modified_log_probs[i] = log_probs[i] * weights
-    batch_loss = -modified_log_probs[torch.arange(targets.size(0)), targets]
-    return batch_loss.mean()
+    loss = F.cross_entropy(logits, targets, reduction='none')
+    same_states_tensor = torch.tensor(same_states, dtype=torch.bool)
+    filtered_loss = loss[~same_states_tensor]
+    if filtered_loss.numel() > 0:
+        mean_loss = filtered_loss.mean()
+    else:
+        mean_loss = torch.tensor(0.0).to(loss.device)
+    return mean_loss
 
 
 # class Binary2BinaryEncoder(nn.Module):
@@ -423,7 +434,8 @@ class Binary2BinaryFeatureNet(torch.nn.Module):
             # compute inverse loss
             pred_actions = self.inv_model(z0, z1)
             # need to handle the case that it is transferred into the same state
-            differences = z0 - z1
+            # differences = z0 - z1
+            differences = obs_vec0 - obs_vec1
             norms = torch.norm(differences, p=2, dim=1)
             same_states = list(norms.detach().cpu().numpy() < 0.5)
             inv_loss = _custom_cross_entropy_loss(pred_actions, actions, same_states)
@@ -436,21 +448,21 @@ class Binary2BinaryFeatureNet(torch.nn.Module):
                 torch.ones(len(z1), device=z1.device),
                 torch.zeros(len(fake_z1), device=fake_z1.device),
             ), dim=0)
-            z0_double = torch.cat((
-                z0,
-                z0,
-            ), dim=0)
-            z1_and_fakes = torch.cat((
-                z1,
-                fake_z1,
-            ), dim=0)
-            # pred_fakes = torch.cat((
-            #     self.discriminator(z0, z1),
-            #     self.discriminator(z0, fake_z1),
+            # z0_double = torch.cat((
+            #     z0,
+            #     z0,
             # ), dim=0)
-            rand_idx = random.randint(0, len(z1) - 1)
-            labels = labels[rand_idx:rand_idx+len(z1), ...]
-            pred_fakes = self.discriminator(z0_double[rand_idx:rand_idx+len(z1), ...], z1_and_fakes[rand_idx:rand_idx+len(z1), ...])
+            # z1_and_fakes = torch.cat((
+            #     z1,
+            #     fake_z1,
+            # ), dim=0)
+            pred_fakes = torch.cat((
+                self.discriminator(z0, z1),
+                self.discriminator(z0, fake_z1),
+            ), dim=0)
+            # rand_idx = random.randint(0, len(z1) - 1)
+            # labels = labels[rand_idx:rand_idx+len(z1), ...]
+            # pred_fakes = self.discriminator(z0_double[rand_idx:rand_idx+len(z1), ...], z1_and_fakes[rand_idx:rand_idx+len(z1), ...])
             ratio_loss = self.bce_loss(pred_fakes, labels)
 
         reward_loss = torch.tensor(0.0).to(self.device)
