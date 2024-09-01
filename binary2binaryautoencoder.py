@@ -173,7 +173,7 @@ class TerminationPredictor(torch.nn.Module):
         self.predictor = torch.nn.Sequential(*self.layers)
 
     def forward(self, z):
-        reward = self.predictor(z).squeeze()
+        reward = self.predictor(z)  # .squeeze()
         return reward
 
 
@@ -199,7 +199,7 @@ class RewardPredictor(torch.nn.Module):
     def forward(self, z0, a, z1):
         a_logits = F.one_hot(a, num_classes=self.n_actions).float()
         context = torch.cat((z0, z1, a_logits), -1)
-        reward = self.reward_predictor(context).squeeze()
+        reward = self.reward_predictor(context)  # .squeeze()
         return reward
 
 
@@ -249,7 +249,7 @@ class ContrastiveNet(torch.nn.Module):
 
     def forward(self, z0, z1):
         context = torch.cat((z0, z1), -1)
-        fakes = self.model(context).squeeze()
+        fakes = self.model(context)  # .squeeze()
         return F.sigmoid(fakes)
 
 
@@ -484,7 +484,7 @@ class Binary2BinaryFeatureNet(torch.nn.Module):
             pred_fakes = torch.cat((
                 self.discriminator(z0_filtered, z1_filtered),
                 self.discriminator(z0_filtered, fake_z1_filtered),
-            ), dim=0)
+            ), dim=0).squeeze()
             # rand_idx = random.randint(0, len(z1) - 1)
             # labels = labels[rand_idx:rand_idx+len(z1), ...]
             # pred_fakes = self.discriminator(z0_double[rand_idx:rand_idx+len(z1), ...], z1_and_fakes[rand_idx:rand_idx+len(z1), ...])
@@ -493,13 +493,13 @@ class Binary2BinaryFeatureNet(torch.nn.Module):
         reward_loss = torch.tensor(0.0).to(self.device)
         if self.reward_predictor:
             # compute reward loss
-            pred_rwds = self.reward_predictor(z0, actions, z1)
+            pred_rwds = self.reward_predictor(z0, actions, z1).squeeze()
             reward_loss = self.mse_loss(pred_rwds, rewards)
 
         terminate_loss = torch.tensor(0.0).to(self.device)
         if self.termination_predictor:
             # compute terminate loss
-            pred_terminated = self.termination_predictor(z1)
+            pred_terminated = self.termination_predictor(z1).squeeze()
             terminate_loss = self.bce_loss(pred_terminated, is_terminated)
 
         # compute neighbour loss
