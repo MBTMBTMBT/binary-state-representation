@@ -280,14 +280,14 @@ class Binary2BinaryFeatureNet(torch.nn.Module):
             n_input_dims=n_obs_dims,
             n_latent_dims=n_latent_dims,
             n_hidden_layers=3,
-            n_units_per_layer=512,
+            n_units_per_layer=1024,
         ).to(device)
 
         if weights['inv'] > 0.0:
             self.inv_model = InvNet(
                 n_actions=n_actions,
                 n_latent_dims=n_latent_dims,
-                n_units_per_layer=1,
+                n_units_per_layer=3,
                 n_hidden_layers=256,
             ).to(device)
         else:
@@ -296,7 +296,7 @@ class Binary2BinaryFeatureNet(torch.nn.Module):
         if weights['dis'] > 0.0:
             self.discriminator = ContrastiveNet(
                 n_latent_dims=n_latent_dims,
-                n_hidden_layers=1,
+                n_hidden_layers=3,
                 n_units_per_layer=256,
             ).to(device)
         else:
@@ -306,7 +306,7 @@ class Binary2BinaryFeatureNet(torch.nn.Module):
             self.decoder = Binary2BinaryDecoder(
                 n_latent_dims=n_latent_dims,
                 output_dim=n_obs_dims,
-                n_hidden_layers=1,
+                n_hidden_layers=3,
                 n_units_per_layer=256,
             ).to(device)
         else:
@@ -316,7 +316,7 @@ class Binary2BinaryFeatureNet(torch.nn.Module):
             self.reward_predictor = RewardPredictor(
                 n_actions=n_actions,
                 n_latent_dims=n_latent_dims,
-                n_hidden_layers=1,
+                n_hidden_layers=3,
                 n_units_per_layer=256,
             ).to(device)
         else:
@@ -325,7 +325,7 @@ class Binary2BinaryFeatureNet(torch.nn.Module):
         if weights['terminate'] > 0.0:
             self.termination_predictor = TerminationPredictor(
                 n_latent_dims=n_latent_dims,
-                n_hidden_layers=1,
+                n_hidden_layers=3,
                 n_units_per_layer=256,
             ).to(device)
         else:
@@ -429,16 +429,31 @@ class Binary2BinaryFeatureNet(torch.nn.Module):
             # rec_loss = torch.mean(rec_losses)
             rec_loss = self.bce_loss(torch.cat((decoded_z0, decoded_z1), dim=0), torch.cat((obs_vec0, obs_vec1), dim=0))
 
-        inv_loss = torch.tensor(0.0).to(self.device)
+        # inv_loss = torch.tensor(0.0).to(self.device)
+        # if self.inv_model:
+        #     # compute inverse loss
+        #     pred_actions = self.inv_model(z0, z1)
+        #     # need to handle the case that it is transferred into the same state
+        #     # differences = z0 - z1
+        #     differences = obs_vec0 - obs_vec1
+        #     norms = torch.norm(differences, p=2, dim=1)
+        #     same_states = list(norms.detach().cpu().numpy() < 0.5)
+        #     inv_loss = _custom_cross_entropy_loss(pred_actions, actions, same_states)
+
         if self.inv_model:
-            # compute inverse loss
-            pred_actions = self.inv_model(z0, z1)
-            # need to handle the case that it is transferred into the same state
-            # differences = z0 - z1
             differences = obs_vec0 - obs_vec1
             norms = torch.norm(differences, p=2, dim=1)
-            same_states = list(norms.detach().cpu().numpy() < 0.5)
-            inv_loss = _custom_cross_entropy_loss(pred_actions, actions, same_states)
+            same_states = norms < 0.5
+
+            z0_filtered = z0[~same_states]
+            z1_filtered = z1[~same_states]
+            actions_filtered = actions[~same_states]
+
+            if z0_filtered.size(0) > 0:
+                pred_actions = self.inv_model(z0_filtered, z1_filtered)
+                inv_loss = self.cross_entropy(pred_actions, actions_filtered)
+            else:
+                inv_loss = torch.tensor(0.0).to(self.device)
 
         ratio_loss = torch.tensor(0.0).to(self.device)
         if self.discriminator:
