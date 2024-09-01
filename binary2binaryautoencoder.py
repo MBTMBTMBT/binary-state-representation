@@ -392,15 +392,23 @@ class Binary2BinaryFeatureNet(torch.nn.Module):
                 self.termination_predictor.eval()
             self.termination_predictor.eval()
 
+        differences = obs_vec0 - obs_vec1
+        norms = torch.norm(differences, p=2, dim=1)
+        same_states = norms < 0.5
+
         # encode obs 0, obs 1
         z0_ = self.encoder(obs_vec0, slope=self.slope, binary_output=self.use_bin)
         z0 = _fix_bits(z0_, num_keep_dim)
         z1_ = self.encoder(obs_vec1, slope=self.slope, binary_output=self.use_bin)
         z1 = _fix_bits(z1_, num_keep_dim)
 
+        z0_filtered = z0[~same_states]
+        z1_filtered = z1[~same_states]
+
         # get fake z1
         idx = torch.randperm(len(obs_vec1))
         fake_z1 = z1.view(len(z1), -1)[idx].view(z1.size())
+        fake_z1_filtered = fake_z1[~same_states]
 
         # def numpy_binary_array_to_string(binary_array):
         #     binary_array = np.array(binary_array, dtype=np.uint8)
@@ -441,12 +449,6 @@ class Binary2BinaryFeatureNet(torch.nn.Module):
         #     inv_loss = _custom_cross_entropy_loss(pred_actions, actions, same_states)
 
         if self.inv_model:
-            differences = obs_vec0 - obs_vec1
-            norms = torch.norm(differences, p=2, dim=1)
-            same_states = norms < 0.5
-
-            z0_filtered = z0[~same_states]
-            z1_filtered = z1[~same_states]
             actions_filtered = actions[~same_states]
 
             if z0_filtered.size(0) > 0:
@@ -459,9 +461,13 @@ class Binary2BinaryFeatureNet(torch.nn.Module):
         if self.discriminator:
             # compute ratio loss
             # real transitions = 1s; fake transitions = 0s
+            # labels = torch.cat((
+            #     torch.ones(len(z1), device=z1.device),
+            #     torch.zeros(len(fake_z1), device=fake_z1.device),
+            # ), dim=0)
             labels = torch.cat((
-                torch.ones(len(z1), device=z1.device),
-                torch.zeros(len(fake_z1), device=fake_z1.device),
+                torch.ones(len(z1_filtered), device=z1_filtered.device),
+                torch.zeros(len(fake_z1_filtered), device=fake_z1_filtered.device),
             ), dim=0)
             # z0_double = torch.cat((
             #     z0,
@@ -471,9 +477,13 @@ class Binary2BinaryFeatureNet(torch.nn.Module):
             #     z1,
             #     fake_z1,
             # ), dim=0)
+            # pred_fakes = torch.cat((
+            #     self.discriminator(z0, z1),
+            #     self.discriminator(z0, fake_z1),
+            # ), dim=0)
             pred_fakes = torch.cat((
-                self.discriminator(z0, z1),
-                self.discriminator(z0, fake_z1),
+                self.discriminator(z0_filtered, z1_filtered),
+                self.discriminator(z0_filtered, fake_z1_filtered),
             ), dim=0)
             # rand_idx = random.randint(0, len(z1) - 1)
             # labels = labels[rand_idx:rand_idx+len(z1), ...]
