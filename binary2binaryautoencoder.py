@@ -448,14 +448,13 @@ class Binary2BinaryFeatureNet(torch.nn.Module):
         #     same_states = list(norms.detach().cpu().numpy() < 0.5)
         #     inv_loss = _custom_cross_entropy_loss(pred_actions, actions, same_states)
 
+        inv_loss = torch.tensor(0.0).to(self.device)
         if self.inv_model:
             actions_filtered = actions[~same_states]
 
             if z0_filtered.size(0) > 0:
                 pred_actions = self.inv_model(z0_filtered, z1_filtered)
                 inv_loss = self.cross_entropy(pred_actions, actions_filtered)
-            else:
-                inv_loss = torch.tensor(0.0).to(self.device)
 
         ratio_loss = torch.tensor(0.0).to(self.device)
         if self.discriminator:
