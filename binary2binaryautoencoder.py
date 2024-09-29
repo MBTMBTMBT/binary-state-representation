@@ -287,8 +287,8 @@ class Binary2BinaryFeatureNet(torch.nn.Module):
             self.inv_model = InvNet(
                 n_actions=n_actions,
                 n_latent_dims=n_latent_dims,
-                n_units_per_layer=1,
-                n_hidden_layers=512,
+                n_units_per_layer=2,
+                n_hidden_layers=64,
             ).to(device)
         else:
             self.inv_model = None
@@ -296,8 +296,8 @@ class Binary2BinaryFeatureNet(torch.nn.Module):
         if weights['dis'] > 0.0:
             self.discriminator = ContrastiveNet(
                 n_latent_dims=n_latent_dims,
-                n_hidden_layers=1,
-                n_units_per_layer=512,
+                n_hidden_layers=2,
+                n_units_per_layer=64,
             ).to(device)
         else:
             self.discriminator = None
@@ -306,8 +306,8 @@ class Binary2BinaryFeatureNet(torch.nn.Module):
             self.decoder = Binary2BinaryDecoder(
                 n_latent_dims=n_latent_dims,
                 output_dim=n_obs_dims,
-                n_hidden_layers=1,
-                n_units_per_layer=512,
+                n_hidden_layers=2,
+                n_units_per_layer=64,
             ).to(device)
         else:
             self.decoder = None
@@ -316,8 +316,8 @@ class Binary2BinaryFeatureNet(torch.nn.Module):
             self.reward_predictor = RewardPredictor(
                 n_actions=n_actions,
                 n_latent_dims=n_latent_dims,
-                n_hidden_layers=1,
-                n_units_per_layer=512,
+                n_hidden_layers=2,
+                n_units_per_layer=64,
             ).to(device)
         else:
             self.reward_predictor = None
@@ -325,8 +325,8 @@ class Binary2BinaryFeatureNet(torch.nn.Module):
         if weights['terminate'] > 0.0:
             self.termination_predictor = TerminationPredictor(
                 n_latent_dims=n_latent_dims,
-                n_hidden_layers=1,
-                n_units_per_layer=512,
+                n_hidden_layers=2,
+                n_units_per_layer=64,
             ).to(device)
         else:
             self.termination_predictor = None
